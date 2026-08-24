@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Torque, Motor & Brake Finder</title>
-    <!-- Keep the SheetJS library -->
+    <!-- SheetJS library for Excel processing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 950px; margin: 0 auto; background-color: #f0f2f5; }
@@ -33,7 +33,10 @@
         .price-tag { font-weight: bold; color: #2e7d32; }
         .shaft-badge { display: inline-block; background: #e3f2fd; color: #0d47a1; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
         
-        #loadingOverlay { font-weight: bold; color: #1a73e8; margin-bottom: 10px; }
+        #statusIndicator { margin-bottom: 20px; padding: 10px; border-radius: 6px; font-weight: bold; font-size: 0.9em; }
+        .status-loading { background: #fff3cd; color: #856404; }
+        .status-ready { background: #d4edda; color: #155724; }
+        .status-error { background: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
@@ -41,8 +44,8 @@
 <div class="card">
     <h2>Torque Finder Pro</h2>
     
-    <!-- Status message for data loading -->
-    <div id="loadingOverlay">Initializing system, please wait...</div>
+    <!-- Automatic Loading Status -->
+    <div id="statusIndicator" class="status-loading">⌛ Initializing database...</div>
 
     <div class="input-group">
         <label for="shutterType">1. Roller Shutter Type</label>
@@ -73,11 +76,13 @@
 
     <div id="torqueResult"></div>
 
+    <!-- Safety Brake Section -->
     <div id="brakeSection" class="result-section">
         <h3>Recommended Safety Brake</h3>
         <div id="brakeDisplay" class="brake-grid"></div>
     </div>
 
+    <!-- Motor Section -->
     <div id="motorSection" class="result-section">
         <h3>Compatible Motors</h3>
         <table id="motorTable">
@@ -96,49 +101,52 @@
 </div>
 
 <script>
-    // CONFIGURATION: Set this to the name of your Excel file
-    const EXCEL_FILE_PATH = 'your-data-file.xlsx'; 
+    // Config: Exact name of your file on GitHub
+    const FILE_NAME = 'Online logic all tables.xlsx';
 
     let torqueData = null;
     let motorData = null;
     let brakeData = null;
 
-    // Load data automatically when the window opens
+    // Run automatically on page load
     window.addEventListener('DOMContentLoaded', async () => {
-        const loadingMsg = document.getElementById('loadingOverlay');
+        const status = document.getElementById('statusIndicator');
+        
         try {
-            const response = await fetch(EXCEL_FILE_PATH);
-            if (!response.ok) throw new Error("Could not find the Excel data file.");
+            // Fetch the file from the root directory
+            const response = await fetch(encodeURI(FILE_NAME));
             
-            const arrayBuffer = await response.arrayBuffer();
-            processExcel(arrayBuffer);
+            if (!response.ok) {
+                throw new Error(`Could not find "${FILE_NAME}". Verify the file is in the root directory and the name matches exactly.`);
+            }
+
+            const data = await response.arrayBuffer();
+            const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
             
-            loadingMsg.innerHTML = "✅ Database Loaded Successfully";
-            loadingMsg.style.color = "#1e8e3e";
+            // Map the sheets
+            const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
+            const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
+            const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
+
+            if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
+            if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
+            if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
+
+            if (!torqueData || !motorData || !brakeData) {
+                throw new Error("Excel file is missing required tabs (All torque charts, Motor list, or Safety brake).");
+            }
+
+            // Success: Enable the UI
+            status.innerHTML = "✅ Database Loaded & Ready";
+            status.className = "status-ready";
             document.getElementById('lookupBtn').disabled = false;
+
         } catch (err) {
-            loadingMsg.innerHTML = "❌ Error: " + err.message;
-            loadingMsg.style.color = "#d93025";
+            status.innerHTML = "❌ Error: " + err.message;
+            status.className = "status-error";
             console.error(err);
         }
     });
-
-    function processExcel(dataBuffer) {
-        const data = new Uint8Array(dataBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        
-        const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
-        const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
-        const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
-
-        if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
-        if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
-        if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
-
-        if (!torqueData || !motorData || !brakeData) {
-            throw new Error("Missing required tabs in Excel.");
-        }
-    }
 
     document.getElementById('lookupBtn').addEventListener('click', function() {
         const selectedType = document.getElementById('shutterType').value.toLowerCase();
@@ -151,6 +159,7 @@
         }
 
         try {
+            // 1. Find Width Column (Header is Row 3, Index 2)
             const headerRow = torqueData[2]; 
             let availableWidths = [];
             for (let j = 2; j < headerRow.length; j++) {
@@ -159,6 +168,7 @@
             }
             const widthMatch = availableWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
+            // 2. Find Height Row
             let availableHeights = [];
             for (let i = 3; i < torqueData.length; i++) {
                 const rowType = String(torqueData[i][0] || "").toLowerCase().replace(/\s/g, '');
@@ -200,10 +210,10 @@
 
             if (!isNaN(maxTorqueLimit) && torque <= maxTorqueLimit) {
                 selectedBrake = {
-                    name: row[0],
-                    shaft: row[5],
-                    stockCode: row[7],
-                    price: row[8]
+                    name: row[0],       
+                    shaft: row[5],      
+                    stockCode: row[7],  
+                    price: row[8]       
                 };
                 break;
             }
