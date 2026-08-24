@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Torque & BOM Finder Pro</title>
-    <!-- SheetJS library for Excel processing -->
+    <!-- SheetJS library -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 950px; margin: 0 auto; background-color: #f0f2f5; }
@@ -126,16 +126,25 @@
             const data = await response.arrayBuffer();
             const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
             
-            // Map the sheets based on your specific Excel tab names
-            const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
-            const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
-            const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
-            const pName = workbook.SheetNames.find(n => n.trim() === "75mm 20G price");
+            // Flexible sheet name matching
+            const findSheet = (keywords) => {
+                return workbook.SheetNames.find(name => 
+                    keywords.every(k => name.toLowerCase().includes(k.toLowerCase()))
+                );
+            };
+
+            const tName = findSheet(["torque", "charts"]);
+            const mName = findSheet(["motor", "list"]);
+            const bName = findSheet(["brake"]);
+            const pName = findSheet(["75mm", "price"]); // Should find "75mm 20G price"
 
             if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
             if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
             if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
             if (pName) bomPriceData = XLSX.utils.sheet_to_json(workbook.Sheets[pName], { header: 1, defval: "" });
+
+            console.log("Database Loaded.");
+            console.log("BOM Table Found:", !!pName);
 
             status.innerHTML = "✅ Database Loaded & Ready";
             status.className = "status-ready";
@@ -148,7 +157,6 @@
     });
 
     document.getElementById('lookupBtn').addEventListener('click', function() {
-        const selectedType = document.getElementById('shutterType').value.toLowerCase();
         const inputWidth = parseFloat(document.getElementById('widthInput').value);
         const inputHeight = parseFloat(document.getElementById('heightInput').value);
         const shouldCalcBom = document.getElementById('calcBomPrice').checked;
@@ -159,87 +167,87 @@
         }
 
         try {
-            // --- 1. TORQUE CALCULATION ---
+            // --- 1. TORQUE ---
             const headerRow = torqueData[2]; 
-            let availableWidths = [];
+            let availTWidths = [];
             for (let j = 2; j < headerRow.length; j++) {
                 let val = parseFloat(headerRow[j]);
-                if (!isNaN(val)) availableWidths.push({ val: val, index: j });
+                if (!isNaN(val)) availTWidths.push({ val, index: j });
             }
-            const widthMatch = availableWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
+            const tWidthMatch = availTWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
-            let availableHeights = [];
+            const selectedType = document.getElementById('shutterType').value.toLowerCase();
+            let availTHeights = [];
             for (let i = 3; i < torqueData.length; i++) {
                 const rowType = String(torqueData[i][0] || "").toLowerCase().replace(/\s/g, '');
                 if (rowType === selectedType) {
                     let hVal = parseFloat(torqueData[i][1]);
-                    if (!isNaN(hVal)) availableHeights.push({ val: hVal, index: i });
+                    if (!isNaN(hVal)) availTHeights.push({ val: hVal, index: i });
                 }
             }
-            const heightMatch = availableHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
+            const tHeightMatch = availTHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
 
-            if (!widthMatch || !heightMatch) {
+            if (!tWidthMatch || !tHeightMatch) {
                 showResult("Input exceeds chart dimensions.", "error");
                 return;
             }
+            const calculatedTorque = parseFloat(torqueData[tHeightMatch.index][tWidthMatch.index]);
 
-            const calculatedTorque = parseFloat(torqueData[heightMatch.index][widthMatch.index]);
-            
-            // --- 2. BOM PRICE LOOKUP (Based on your Screenshot) ---
+            // --- 2. BOM PRICE (Exact Screenshot Logic) ---
             let currentBomPrice = 0;
             let bomInfoText = "";
-            
-            if (shouldCalcBom && bomPriceData) {
-                // Width lookup: Row 1 (Index 0). Widths start at Column B (Index 1)
-                const bomHeader = bomPriceData[0];
-                let bomWidthCols = [];
-                for (let j = 1; j < bomHeader.length; j++) {
-                    // Extract numbers from strings like "w1900"
-                    let cellVal = String(bomHeader[j] || "");
-                    let num = parseFloat(cellVal.replace(/[^\d.]/g, '')); 
-                    if (!isNaN(num)) bomWidthCols.push({ val: num, index: j });
-                }
-                // Find column where Header >= Input
-                const bomWidthMatch = bomWidthCols.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
-                // Height lookup: Column A (Index 0). Heights start at Row 2 (Index 1)
-                let bomHeightRows = [];
-                for (let i = 1; i < bomPriceData.length; i++) {
-                    let hVal = parseFloat(bomPriceData[i][0]); // Column A
-                    if (!isNaN(hVal)) bomHeightRows.push({ val: hVal, index: i });
+            if (shouldCalcBom && bomPriceData) {
+                // Width lookup: Row 1 (Index 0), start looking from Col B (Index 1)
+                const bomHeaderRow = bomPriceData[0];
+                let bomWidths = [];
+                for (let j = 1; j < bomHeaderRow.length; j++) {
+                    let cellVal = String(bomHeaderRow[j] || "");
+                    // Extract digits, e.g., "w1900" -> 1900
+                    let num = parseFloat(cellVal.replace(/[^\d.]/g, ''));
+                    if (!isNaN(num)) bomWidths.push({ val: num, index: j });
                 }
-                // Find row where Column A >= Input
-                const bomHeightMatch = bomHeightRows.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
+                const bomWidthMatch = bomWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
+
+                // Height lookup: Column A (Index 0), start looking from Row 2 (Index 1)
+                let bomHeights = [];
+                for (let i = 1; i < bomPriceData.length; i++) {
+                    let cellVal = String(bomPriceData[i][0] || "");
+                    let num = parseFloat(cellVal.replace(/[^\d.]/g, ''));
+                    if (!isNaN(num)) bomHeights.push({ val: num, index: i });
+                }
+                const bomHeightMatch = bomHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
 
                 if (bomWidthMatch && bomHeightMatch) {
-                    const priceValue = bomPriceData[bomHeightMatch.index][bomWidthMatch.index];
-                    currentBomPrice = parseFloat(priceValue) || 0;
+                    const priceRaw = bomPriceData[bomHeightMatch.index][bomWidthMatch.index];
+                    currentBomPrice = parseFloat(priceRaw) || 0;
                     
                     bomInfoText = `
                         <div style="color:#2e7d32; font-weight:bold; margin-top:8px; padding-top:8px; border-top:1px solid #ceead6;">
                             BOM Price (without motor): £${currentBomPrice.toFixed(2)}
                         </div>
                         <div style="font-size:0.8em; color:#666;">
-                            (Based on ${bomWidthMatch.val}mm x ${bomHeightMatch.val}mm chart intersection)
+                            (Using chart values: W${bomWidthMatch.val} x H${bomHeightMatch.val})
                         </div>
                     `;
                 } else {
-                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM dimensions not found in chart.</div>`;
+                    console.log("BOM lookup failed:", {bomWidthMatch, bomHeightMatch});
+                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM data not found for these dimensions.</div>`;
                 }
             }
 
-            // Display Results
+            // Update UI
             showResult(`
                 <div style="font-size:1.4em; font-weight:bold;">Required Torque: ${calculatedTorque} Nm</div>
-                <div class="rounding-info">Torque rounded to: ${widthMatch.val}mm x ${heightMatch.val}mm</div>
+                <div class="rounding-info">Torque calculation based on: ${tWidthMatch.val}mm x ${tHeightMatch.val}mm</div>
                 ${bomInfoText}
             `, "success");
 
-            const selectedBrake = findSafetyBrake(calculatedTorque);
-            findMotors(calculatedTorque, selectedBrake, currentBomPrice);
+            const brake = findSafetyBrake(calculatedTorque);
+            findMotors(calculatedTorque, brake, currentBomPrice);
 
         } catch (err) {
-            showResult("Error during calculation. Please check Excel format.", "error");
+            showResult("Calculation Error. See console (F12) for details.", "error");
             console.error(err);
         }
     });
@@ -247,81 +255,51 @@
     function findSafetyBrake(torque) {
         const display = document.getElementById('brakeDisplay');
         document.getElementById('brakeSection').style.display = 'block';
-        let selectedBrake = null;
-
+        let selected = null;
         for (let i = 1; i < brakeData.length; i++) {
-            const row = brakeData[i];
-            const maxTorqueLimit = parseFloat(row[1]); 
-
-            if (!isNaN(maxTorqueLimit) && torque <= maxTorqueLimit) {
-                selectedBrake = {
-                    name: row[0],       
-                    shaft: row[5],      
-                    stockCode: row[7],  
-                    price: row[8]       
-                };
+            const maxT = parseFloat(brakeData[i][1]);
+            if (!isNaN(maxT) && torque <= maxT) {
+                selected = { name: brakeData[i][0], shaft: brakeData[i][5], stock: brakeData[i][7], price: brakeData[i][8] };
                 break;
             }
         }
-
-        if (selectedBrake) {
-            display.innerHTML = `
-                <div>
-                    <strong>Model:</strong> ${selectedBrake.name}<br>
-                    <strong>Stock Code:</strong> ${selectedBrake.stockCode}
-                </div>
-                <div>
-                    <strong>Shaft Size:</strong> <span class="shaft-badge">${selectedBrake.shaft || 'N/A'}</span><br>
-                    <strong>Price:</strong> <span class="price-tag">£${selectedBrake.price}</span>
-                </div>
-            `;
+        if (selected) {
+            display.innerHTML = `<div><strong>Model:</strong> ${selected.name}<br><strong>Stock:</strong> ${selected.stock}</div>
+                                 <div><strong>Shaft:</strong> <span class="shaft-badge">${selected.shaft || 'N/A'}</span><br>
+                                 <strong>Price:</strong> <span class="price-tag">£${selected.price}</span></div>`;
         } else {
             display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm.</div>`;
         }
-        return selectedBrake;
+        return selected;
     }
 
-    function findMotors(torque, selectedBrake, bomPrice) {
+    function findMotors(torque, brake, bomPrice) {
         const body = document.getElementById('motorBody');
         const section = document.getElementById('motorSection');
         const totalCols = document.querySelectorAll('.total-col');
         const isBomActive = (bomPrice > 0);
-        
         body.innerHTML = "";
         let found = false;
 
-        // Toggle Total Column Visibility
         totalCols.forEach(el => el.style.display = isBomActive ? 'table-cell' : 'none');
 
         for (let i = 1; i < motorData.length; i++) {
-            const row = motorData[i];
-            const min = parseFloat(row[5]);
-            const max = parseFloat(row[6]);
-            const driveType = String(row[8] || "").toLowerCase().trim();
-
+            const min = parseFloat(motorData[i][5]);
+            const max = parseFloat(motorData[i][6]);
             if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max) {
                 found = true;
+                const driveType = String(motorData[i][8] || "").toLowerCase().trim();
+                let shaft = (driveType === "indirect" && brake) ? brake.shaft : motorData[i][7];
+                const mPrice = parseFloat(motorData[i][4]) || 0;
                 
-                let displayShaft = row[7]; 
-                if (driveType === "indirect" && selectedBrake) {
-                    displayShaft = selectedBrake.shaft; 
-                }
-
-                const motorPrice = parseFloat(row[4]) || 0;
-                const totalPrice = motorPrice + bomPrice;
-
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${row[0]}</td>
-                    <td>${row[2]}</td>
-                    <td><span class="shaft-badge">${displayShaft || '-'}</span></td>
-                    <td class="price-tag">£${motorPrice.toFixed(2)}</td>
-                    <td class="total-col total-price-tag" style="display:${isBomActive ? 'table-cell' : 'none'}">£${totalPrice.toFixed(2)}</td>
-                `;
+                tr.innerHTML = `<td>${motorData[i][0]}</td><td>${motorData[i][2]}</td>
+                                <td><span class="shaft-badge">${shaft || '-'}</span></td>
+                                <td class="price-tag">£${mPrice.toFixed(2)}</td>
+                                <td class="total-col total-price-tag" style="display:${isBomActive ? 'table-cell' : 'none'}">£${(mPrice + bomPrice).toFixed(2)}</td>`;
                 body.appendChild(tr);
             }
         }
-
         section.style.display = 'block';
         document.getElementById('motorTable').style.display = found ? 'table' : 'none';
         document.getElementById('noMotorMsg').style.display = found ? 'none' : 'block';
