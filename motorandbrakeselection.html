@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Torque, Motor & Brake Finder</title>
+    <!-- Keep the SheetJS library -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 950px; margin: 0 auto; background-color: #f0f2f5; }
@@ -15,6 +16,7 @@
         select, input { width: 100%; padding: 10px; border: 1px solid #ccd0d5; border-radius: 6px; box-sizing: border-box; font-size: 15px; }
         button { background-color: #1a73e8; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; width: 100%; font-size: 16px; font-weight: bold; margin-top: 10px; }
         button:hover { background-color: #1557b0; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
         
         #torqueResult { margin-top: 20px; padding: 15px; border-radius: 6px; display: none; text-align: center; }
         .success { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #ceead6; }
@@ -30,6 +32,8 @@
         .brake-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background-color: #fffde7; border: 1px solid #fbc02d; padding: 15px; border-radius: 6px; margin-top: 10px; }
         .price-tag { font-weight: bold; color: #2e7d32; }
         .shaft-badge { display: inline-block; background: #e3f2fd; color: #0d47a1; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+        
+        #loadingOverlay { font-weight: bold; color: #1a73e8; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -37,13 +41,11 @@
 <div class="card">
     <h2>Torque Finder Pro</h2>
     
-    <div class="input-group">
-        <label for="excelFile">1. Import Spreadsheet</label>
-        <input type="file" id="excelFile" accept=".xlsx, .xls">
-    </div>
+    <!-- Status message for data loading -->
+    <div id="loadingOverlay">Initializing system, please wait...</div>
 
     <div class="input-group">
-        <label for="shutterType">2. Roller Shutter Type</label>
+        <label for="shutterType">1. Roller Shutter Type</label>
         <select id="shutterType">
             <option value="75mm22g">75mm22g</option>
             <option value="75mm22gr">75mm22gr</option>
@@ -67,17 +69,15 @@
         </div>
     </div>
 
-    <button id="lookupBtn">Run Full Calculation</button>
+    <button id="lookupBtn" disabled>Run Full Calculation</button>
 
     <div id="torqueResult"></div>
 
-    <!-- Safety Brake Section -->
     <div id="brakeSection" class="result-section">
         <h3>Recommended Safety Brake</h3>
         <div id="brakeDisplay" class="brake-grid"></div>
     </div>
 
-    <!-- Motor Section -->
     <div id="motorSection" class="result-section">
         <h3>Compatible Motors</h3>
         <table id="motorTable">
@@ -96,41 +96,51 @@
 </div>
 
 <script>
+    // CONFIGURATION: Set this to the name of your Excel file
+    const EXCEL_FILE_PATH = 'your-data-file.xlsx'; 
+
     let torqueData = null;
     let motorData = null;
     let brakeData = null;
 
-    document.getElementById('excelFile').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            try {
-                const data = new Uint8Array(event.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                
-                const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
-                const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
-                const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
-
-                if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
-                if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
-                if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
-
-                if (!torqueData || !motorData || !brakeData) {
-                    showResult("Error: Missing required tabs in Excel.", "error");
-                } else {
-                    showResult("System Ready: Data Loaded.", "success");
-                }
-            } catch (err) {
-                showResult("Failed to read Excel file.", "error");
-            }
-        };
-        reader.readAsArrayBuffer(file);
+    // Load data automatically when the window opens
+    window.addEventListener('DOMContentLoaded', async () => {
+        const loadingMsg = document.getElementById('loadingOverlay');
+        try {
+            const response = await fetch(EXCEL_FILE_PATH);
+            if (!response.ok) throw new Error("Could not find the Excel data file.");
+            
+            const arrayBuffer = await response.arrayBuffer();
+            processExcel(arrayBuffer);
+            
+            loadingMsg.innerHTML = "✅ Database Loaded Successfully";
+            loadingMsg.style.color = "#1e8e3e";
+            document.getElementById('lookupBtn').disabled = false;
+        } catch (err) {
+            loadingMsg.innerHTML = "❌ Error: " + err.message;
+            loadingMsg.style.color = "#d93025";
+            console.error(err);
+        }
     });
 
-    document.getElementById('lookupBtn').addEventListener('click', function() {
-        if (!torqueData) { showResult("Please upload the Excel file.", "error"); return; }
+    function processExcel(dataBuffer) {
+        const data = new Uint8Array(dataBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        
+        const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
+        const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
+        const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
 
+        if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
+        if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
+        if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
+
+        if (!torqueData || !motorData || !brakeData) {
+            throw new Error("Missing required tabs in Excel.");
+        }
+    }
+
+    document.getElementById('lookupBtn').addEventListener('click', function() {
         const selectedType = document.getElementById('shutterType').value.toLowerCase();
         const inputWidth = parseFloat(document.getElementById('widthInput').value);
         const inputHeight = parseFloat(document.getElementById('heightInput').value);
@@ -141,7 +151,6 @@
         }
 
         try {
-            // 1. GRID ROUND UP
             const headerRow = torqueData[2]; 
             let availableWidths = [];
             for (let j = 2; j < headerRow.length; j++) {
@@ -187,14 +196,14 @@
 
         for (let i = 1; i < brakeData.length; i++) {
             const row = brakeData[i];
-            const maxTorqueLimit = parseFloat(row[1]); // Col B
+            const maxTorqueLimit = parseFloat(row[1]); 
 
             if (!isNaN(maxTorqueLimit) && torque <= maxTorqueLimit) {
                 selectedBrake = {
-                    name: row[0],       // Col A
-                    shaft: row[5],      // Col F (Index 5)
-                    stockCode: row[7],  // Col H (Index 7)
-                    price: row[8]       // Col I (Index 8)
+                    name: row[0],
+                    shaft: row[5],
+                    stockCode: row[7],
+                    price: row[8]
                 };
                 break;
             }
@@ -230,7 +239,6 @@
             if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max) {
                 found = true;
                 const tr = document.createElement('tr');
-                // Col A: Stock, Col C: Desc, Col H: Shaft (Idx 7), Col E: Price (Idx 4)
                 tr.innerHTML = `
                     <td>${row[0]}</td>
                     <td>${row[2]}</td>
