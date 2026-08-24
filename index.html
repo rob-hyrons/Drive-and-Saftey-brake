@@ -31,17 +31,13 @@
         
         .brake-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background-color: #fffde7; border: 1px solid #fbc02d; padding: 15px; border-radius: 6px; margin-top: 10px; }
         .price-tag { font-weight: bold; color: #2e7d32; }
-        .total-price-tag { font-weight: bold; color: #d93025; }
+        .total-price-tag { font-weight: bold; color: #d93025; font-size: 1.1em; }
         .shaft-badge { display: inline-block; background: #e3f2fd; color: #0d47a1; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
         
         #statusIndicator { margin-bottom: 20px; padding: 10px; border-radius: 6px; font-weight: bold; font-size: 0.9em; }
         .status-loading { background: #fff3cd; color: #856404; }
         .status-ready { background: #d4edda; color: #155724; }
         .status-error { background: #f8d7da; color: #721c24; }
-
-        .checkbox-group { margin: 15px 0; background: #f8f9fa; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
-        .checkbox-group label { display: flex; align-items: center; cursor: pointer; font-weight: 600; color: #444; }
-        .checkbox-group input { width: auto; margin-right: 12px; transform: scale(1.2); }
     </style>
 </head>
 <body>
@@ -76,10 +72,12 @@
         </div>
     </div>
 
-    <div class="checkbox-group">
-        <label>
-            <input type="checkbox" id="calcBomPrice"> Include BOM (Bill of Materials) Price
-        </label>
+    <div class="input-group">
+        <label for="driveTypeInput">3. Drive Type</label>
+        <select id="driveTypeInput">
+            <option value="direct">Direct</option>
+            <option value="indirect">Indirect</option>
+        </select>
     </div>
 
     <button id="lookupBtn" disabled>Run Full Calculation</button>
@@ -100,12 +98,12 @@
                     <th>Description</th>
                     <th>Shaft Size</th>
                     <th>Motor Price</th>
-                    <th class="total-col" style="display:none;">Total Inc. BOM</th>
+                    <th>Total Price (Inc. BOM)</th>
                 </tr>
             </thead>
             <tbody id="motorBody"></tbody>
         </table>
-        <p id="noMotorMsg" style="display:none; color: #666; font-style: italic;">No motors found for this torque range.</p>
+        <p id="noMotorMsg" style="display:none; color: #666; font-style: italic; margin-top: 10px;">No compatible motors found for this torque and drive type.</p>
     </div>
 </div>
 
@@ -126,7 +124,6 @@
             const data = await response.arrayBuffer();
             const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
             
-            // Flexible sheet name matching
             const findSheet = (keywords) => {
                 return workbook.SheetNames.find(name => 
                     keywords.every(k => name.toLowerCase().includes(k.toLowerCase()))
@@ -136,15 +133,12 @@
             const tName = findSheet(["torque", "charts"]);
             const mName = findSheet(["motor", "list"]);
             const bName = findSheet(["brake"]);
-            const pName = findSheet(["75mm", "price"]); // Should find "75mm 20G price"
+            const pName = findSheet(["75mm", "price"]);
 
             if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
             if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
             if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
             if (pName) bomPriceData = XLSX.utils.sheet_to_json(workbook.Sheets[pName], { header: 1, defval: "" });
-
-            console.log("Database Loaded.");
-            console.log("BOM Table Found:", !!pName);
 
             status.innerHTML = "✅ Database Loaded & Ready";
             status.className = "status-ready";
@@ -159,7 +153,7 @@
     document.getElementById('lookupBtn').addEventListener('click', function() {
         const inputWidth = parseFloat(document.getElementById('widthInput').value);
         const inputHeight = parseFloat(document.getElementById('heightInput').value);
-        const shouldCalcBom = document.getElementById('calcBomPrice').checked;
+        const driveTypeFilter = document.getElementById('driveTypeInput').value.toLowerCase();
 
         if (isNaN(inputWidth) || isNaN(inputHeight)) {
             showResult("Please enter numeric values.", "error");
@@ -176,11 +170,11 @@
             }
             const tWidthMatch = availTWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
-            const selectedType = document.getElementById('shutterType').value.toLowerCase();
+            const selectedShutter = document.getElementById('shutterType').value.toLowerCase();
             let availTHeights = [];
             for (let i = 3; i < torqueData.length; i++) {
                 const rowType = String(torqueData[i][0] || "").toLowerCase().replace(/\s/g, '');
-                if (rowType === selectedType) {
+                if (rowType === selectedShutter) {
                     let hVal = parseFloat(torqueData[i][1]);
                     if (!isNaN(hVal)) availTHeights.push({ val: hVal, index: i });
                 }
@@ -193,23 +187,20 @@
             }
             const calculatedTorque = parseFloat(torqueData[tHeightMatch.index][tWidthMatch.index]);
 
-            // --- 2. BOM PRICE (Exact Screenshot Logic) ---
+            // --- 2. BOM PRICE (Automatic) ---
             let currentBomPrice = 0;
             let bomInfoText = "";
 
-            if (shouldCalcBom && bomPriceData) {
-                // Width lookup: Row 1 (Index 0), start looking from Col B (Index 1)
+            if (bomPriceData) {
                 const bomHeaderRow = bomPriceData[0];
                 let bomWidths = [];
                 for (let j = 1; j < bomHeaderRow.length; j++) {
                     let cellVal = String(bomHeaderRow[j] || "");
-                    // Extract digits, e.g., "w1900" -> 1900
                     let num = parseFloat(cellVal.replace(/[^\d.]/g, ''));
                     if (!isNaN(num)) bomWidths.push({ val: num, index: j });
                 }
                 const bomWidthMatch = bomWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
-                // Height lookup: Column A (Index 0), start looking from Row 2 (Index 1)
                 let bomHeights = [];
                 for (let i = 1; i < bomPriceData.length; i++) {
                     let cellVal = String(bomPriceData[i][0] || "");
@@ -224,30 +215,28 @@
                     
                     bomInfoText = `
                         <div style="color:#2e7d32; font-weight:bold; margin-top:8px; padding-top:8px; border-top:1px solid #ceead6;">
-                            BOM Price (without motor): £${currentBomPrice.toFixed(2)}
+                            Base BOM Price (without motor): £${currentBomPrice.toFixed(2)}
                         </div>
                         <div style="font-size:0.8em; color:#666;">
                             (Using chart values: W${bomWidthMatch.val} x H${bomHeightMatch.val})
                         </div>
                     `;
                 } else {
-                    console.log("BOM lookup failed:", {bomWidthMatch, bomHeightMatch});
-                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM data not found for these dimensions.</div>`;
+                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">Warning: BOM data not found for these dimensions.</div>`;
                 }
             }
 
-            // Update UI
             showResult(`
                 <div style="font-size:1.4em; font-weight:bold;">Required Torque: ${calculatedTorque} Nm</div>
-                <div class="rounding-info">Torque calculation based on: ${tWidthMatch.val}mm x ${tHeightMatch.val}mm</div>
+                <div class="rounding-info">Based on chart rounding: ${tWidthMatch.val}mm x ${tHeightMatch.val}mm</div>
                 ${bomInfoText}
             `, "success");
 
             const brake = findSafetyBrake(calculatedTorque);
-            findMotors(calculatedTorque, brake, currentBomPrice);
+            findMotors(calculatedTorque, brake, currentBomPrice, driveTypeFilter);
 
         } catch (err) {
-            showResult("Calculation Error. See console (F12) for details.", "error");
+            showResult("Calculation Error. Please check data alignment in Excel.", "error");
             console.error(err);
         }
     });
@@ -264,42 +253,47 @@
             }
         }
         if (selected) {
-            display.innerHTML = `<div><strong>Model:</strong> ${selected.name}<br><strong>Stock:</strong> ${selected.stock}</div>
-                                 <div><strong>Shaft:</strong> <span class="shaft-badge">${selected.shaft || 'N/A'}</span><br>
+            display.innerHTML = `<div><strong>Model:</strong> ${selected.name}<br><strong>Stock Code:</strong> ${selected.stock}</div>
+                                 <div><strong>Shaft Size:</strong> <span class="shaft-badge">${selected.shaft || 'N/A'}</span><br>
                                  <strong>Price:</strong> <span class="price-tag">£${selected.price}</span></div>`;
         } else {
-            display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm.</div>`;
+            display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm in the chart.</div>`;
         }
         return selected;
     }
 
-    function findMotors(torque, brake, bomPrice) {
+    function findMotors(torque, brake, bomPrice, driveTypeFilter) {
         const body = document.getElementById('motorBody');
         const section = document.getElementById('motorSection');
-        const totalCols = document.querySelectorAll('.total-col');
-        const isBomActive = (bomPrice > 0);
         body.innerHTML = "";
         let found = false;
 
-        totalCols.forEach(el => el.style.display = isBomActive ? 'table-cell' : 'none');
-
         for (let i = 1; i < motorData.length; i++) {
-            const min = parseFloat(motorData[i][5]);
-            const max = parseFloat(motorData[i][6]);
-            if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max) {
+            const row = motorData[i];
+            const min = parseFloat(row[5]);
+            const max = parseFloat(row[6]);
+            const rowDriveType = String(row[8] || "").toLowerCase().trim(); // Column I
+
+            // Filter by Torque range AND matching Drive Type
+            if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max && rowDriveType === driveTypeFilter) {
                 found = true;
-                const driveType = String(motorData[i][8] || "").toLowerCase().trim();
-                let shaft = (driveType === "indirect" && brake) ? brake.shaft : motorData[i][7];
-                const mPrice = parseFloat(motorData[i][4]) || 0;
+                
+                // Indirect motors take the shaft size from the brake
+                let shaft = (rowDriveType === "indirect" && brake) ? brake.shaft : row[7];
+                const motorPrice = parseFloat(row[4]) || 0;
                 
                 const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${motorData[i][0]}</td><td>${motorData[i][2]}</td>
-                                <td><span class="shaft-badge">${shaft || '-'}</span></td>
-                                <td class="price-tag">£${mPrice.toFixed(2)}</td>
-                                <td class="total-col total-price-tag" style="display:${isBomActive ? 'table-cell' : 'none'}">£${(mPrice + bomPrice).toFixed(2)}</td>`;
+                tr.innerHTML = `
+                    <td>${row[0]}</td>
+                    <td>${row[2]}</td>
+                    <td><span class="shaft-badge">${shaft || '-'}</span></td>
+                    <td class="price-tag">£${motorPrice.toFixed(2)}</td>
+                    <td class="total-price-tag">£${(motorPrice + bomPrice).toFixed(2)}</td>
+                `;
                 body.appendChild(tr);
             }
         }
+        
         section.style.display = 'block';
         document.getElementById('motorTable').style.display = found ? 'table' : 'none';
         document.getElementById('noMotorMsg').style.display = found ? 'none' : 'block';
