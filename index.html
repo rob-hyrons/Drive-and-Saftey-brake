@@ -68,11 +68,11 @@
     <div style="display: flex; gap: 15px;">
         <div class="input-group" style="flex: 1;">
             <label for="widthInput">Width (mm)</label>
-            <input type="number" id="widthInput" placeholder="e.g. 1950">
+            <input type="number" id="widthInput" placeholder="e.g. 1900">
         </div>
         <div class="input-group" style="flex: 1;">
             <label for="heightInput">Height (mm)</label>
-            <input type="number" id="heightInput" placeholder="e.g. 2100">
+            <input type="number" id="heightInput" placeholder="e.g. 2000">
         </div>
     </div>
 
@@ -126,6 +126,7 @@
             const data = await response.arrayBuffer();
             const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
             
+            // Map the sheets based on your specific Excel tab names
             const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
             const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
             const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
@@ -158,7 +159,7 @@
         }
 
         try {
-            // 1. Calculate Torque
+            // --- 1. TORQUE CALCULATION ---
             const headerRow = torqueData[2]; 
             let availableWidths = [];
             for (let j = 2; j < headerRow.length; j++) {
@@ -184,41 +185,53 @@
 
             const calculatedTorque = parseFloat(torqueData[heightMatch.index][widthMatch.index]);
             
-            // 2. Calculate BOM Price (Corrected for provided screenshot layout)
+            // --- 2. BOM PRICE LOOKUP (Based on your Screenshot) ---
             let currentBomPrice = 0;
             let bomInfoText = "";
             
             if (shouldCalcBom && bomPriceData) {
-                // Width lookup: Row 1 (Index 0), starting from Column B (Index 1)
-                const pHeader = bomPriceData[0];
-                let pWidths = [];
-                for (let j = 1; j < pHeader.length; j++) {
-                    // Extract number from string like "w1900"
-                    let val = String(pHeader[j]).replace(/[^\d]/g, '').trim(); 
-                    let num = parseFloat(val);
-                    if (!isNaN(num)) pWidths.push({ val: num, index: j });
+                // Width lookup: Row 1 (Index 0). Widths start at Column B (Index 1)
+                const bomHeader = bomPriceData[0];
+                let bomWidthCols = [];
+                for (let j = 1; j < bomHeader.length; j++) {
+                    // Extract numbers from strings like "w1900"
+                    let cellVal = String(bomHeader[j] || "");
+                    let num = parseFloat(cellVal.replace(/[^\d.]/g, '')); 
+                    if (!isNaN(num)) bomWidthCols.push({ val: num, index: j });
                 }
-                const pWidthMatch = pWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
+                // Find column where Header >= Input
+                const bomWidthMatch = bomWidthCols.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
-                // Height lookup: Column A (Index 0), starting from Row 2 (Index 1)
-                let pHeights = [];
+                // Height lookup: Column A (Index 0). Heights start at Row 2 (Index 1)
+                let bomHeightRows = [];
                 for (let i = 1; i < bomPriceData.length; i++) {
-                    let hVal = parseFloat(bomPriceData[i][0]); // Col A
-                    if (!isNaN(hVal)) pHeights.push({ val: hVal, index: i });
+                    let hVal = parseFloat(bomPriceData[i][0]); // Column A
+                    if (!isNaN(hVal)) bomHeightRows.push({ val: hVal, index: i });
                 }
-                const pHeightMatch = pHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
+                // Find row where Column A >= Input
+                const bomHeightMatch = bomHeightRows.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
 
-                if (pWidthMatch && pHeightMatch) {
-                    currentBomPrice = parseFloat(bomPriceData[pHeightMatch.index][pWidthMatch.index]) || 0;
-                    bomInfoText = `<div style="color:#2e7d32; font-weight:bold; margin-top:5px;">BOM Price: £${currentBomPrice.toFixed(2)}</div>`;
+                if (bomWidthMatch && bomHeightMatch) {
+                    const priceValue = bomPriceData[bomHeightMatch.index][bomWidthMatch.index];
+                    currentBomPrice = parseFloat(priceValue) || 0;
+                    
+                    bomInfoText = `
+                        <div style="color:#2e7d32; font-weight:bold; margin-top:8px; padding-top:8px; border-top:1px solid #ceead6;">
+                            BOM Price (without motor): £${currentBomPrice.toFixed(2)}
+                        </div>
+                        <div style="font-size:0.8em; color:#666;">
+                            (Based on ${bomWidthMatch.val}mm x ${bomHeightMatch.val}mm chart intersection)
+                        </div>
+                    `;
                 } else {
-                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM data not found for these dimensions.</div>`;
+                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM dimensions not found in chart.</div>`;
                 }
             }
 
+            // Display Results
             showResult(`
                 <div style="font-size:1.4em; font-weight:bold;">Required Torque: ${calculatedTorque} Nm</div>
-                <div class="rounding-info">Calculated using: ${widthMatch.val}mm x ${heightMatch.val}mm</div>
+                <div class="rounding-info">Torque rounded to: ${widthMatch.val}mm x ${heightMatch.val}mm</div>
                 ${bomInfoText}
             `, "success");
 
@@ -226,7 +239,7 @@
             findMotors(calculatedTorque, selectedBrake, currentBomPrice);
 
         } catch (err) {
-            showResult("Error during calculation.", "error");
+            showResult("Error during calculation. Please check Excel format.", "error");
             console.error(err);
         }
     });
@@ -277,6 +290,7 @@
         body.innerHTML = "";
         let found = false;
 
+        // Toggle Total Column Visibility
         totalCols.forEach(el => el.style.display = isBomActive ? 'table-cell' : 'none');
 
         for (let i = 1; i < motorData.length; i++) {
