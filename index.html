@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Torque, Motor & BOM Finder</title>
+    <title>Torque & BOM Finder Pro</title>
     <!-- SheetJS library for Excel processing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
@@ -40,7 +40,8 @@
         .status-error { background: #f8d7da; color: #721c24; }
 
         .checkbox-group { margin: 15px 0; background: #f8f9fa; padding: 10px; border-radius: 6px; border: 1px solid #eee; }
-        .checkbox-group input { width: auto; margin-right: 10px; }
+        .checkbox-group label { display: flex; align-items: center; cursor: pointer; font-weight: 600; color: #444; }
+        .checkbox-group input { width: auto; margin-right: 12px; transform: scale(1.2); }
     </style>
 </head>
 <body>
@@ -67,17 +68,17 @@
     <div style="display: flex; gap: 15px;">
         <div class="input-group" style="flex: 1;">
             <label for="widthInput">Width (mm)</label>
-            <input type="number" id="widthInput" placeholder="e.g. 2050">
+            <input type="number" id="widthInput" placeholder="e.g. 1950">
         </div>
         <div class="input-group" style="flex: 1;">
             <label for="heightInput">Height (mm)</label>
-            <input type="number" id="heightInput" placeholder="e.g. 1500">
+            <input type="number" id="heightInput" placeholder="e.g. 2100">
         </div>
     </div>
 
     <div class="checkbox-group">
-        <label style="display: flex; align-items: center; cursor: pointer;">
-            <input type="checkbox" id="calcBomPrice"> Calculate and include BOM (Bill of Materials) price
+        <label>
+            <input type="checkbox" id="calcBomPrice"> Include BOM (Bill of Materials) Price
         </label>
     </div>
 
@@ -183,22 +184,26 @@
 
             const calculatedTorque = parseFloat(torqueData[heightMatch.index][widthMatch.index]);
             
-            // 2. Calculate BOM Price (if selected)
+            // 2. Calculate BOM Price (Corrected for provided screenshot layout)
             let currentBomPrice = 0;
             let bomInfoText = "";
+            
             if (shouldCalcBom && bomPriceData) {
+                // Width lookup: Row 1 (Index 0), starting from Column B (Index 1)
                 const pHeader = bomPriceData[0];
                 let pWidths = [];
-                for (let j = 2; j < pHeader.length; j++) {
-                    let val = String(pHeader[j]).replace('W', '').trim();
+                for (let j = 1; j < pHeader.length; j++) {
+                    // Extract number from string like "w1900"
+                    let val = String(pHeader[j]).replace(/[^\d]/g, '').trim(); 
                     let num = parseFloat(val);
                     if (!isNaN(num)) pWidths.push({ val: num, index: j });
                 }
                 const pWidthMatch = pWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
 
+                // Height lookup: Column A (Index 0), starting from Row 2 (Index 1)
                 let pHeights = [];
                 for (let i = 1; i < bomPriceData.length; i++) {
-                    let hVal = parseFloat(bomPriceData[i][1]);
+                    let hVal = parseFloat(bomPriceData[i][0]); // Col A
                     if (!isNaN(hVal)) pHeights.push({ val: hVal, index: i });
                 }
                 const pHeightMatch = pHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
@@ -206,6 +211,8 @@
                 if (pWidthMatch && pHeightMatch) {
                     currentBomPrice = parseFloat(bomPriceData[pHeightMatch.index][pWidthMatch.index]) || 0;
                     bomInfoText = `<div style="color:#2e7d32; font-weight:bold; margin-top:5px;">BOM Price: £${currentBomPrice.toFixed(2)}</div>`;
+                } else {
+                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">BOM data not found for these dimensions.</div>`;
                 }
             }
 
