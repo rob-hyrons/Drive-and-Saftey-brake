@@ -7,7 +7,7 @@
     <!-- SheetJS library -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 950px; margin: 0 auto; background-color: #f0f2f5; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 1000px; margin: 0 auto; background-color: #f0f2f5; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; }
         h2 { color: #1a73e8; margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         h3 { color: #333; margin-top: 25px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
@@ -24,14 +24,14 @@
         .rounding-info { display: block; font-size: 0.8em; margin-top: 5px; color: #666; font-weight: normal; }
 
         .result-section { display: none; margin-top: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; }
-        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; font-size: 0.95em; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
         th { background-color: #f8f9fa; color: #555; }
         tr:nth-child(even) { background-color: #fafafa; }
         
         .brake-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background-color: #fffde7; border: 1px solid #fbc02d; padding: 15px; border-radius: 6px; margin-top: 10px; }
         .price-tag { font-weight: bold; color: #2e7d32; }
-        .total-price-tag { font-weight: bold; color: #d93025; font-size: 1.1em; }
+        .total-price-tag { font-weight: bold; color: #d93025; font-size: 1.05em; }
         .shaft-badge { display: inline-block; background: #e3f2fd; color: #0d47a1; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
         
         #statusIndicator { margin-bottom: 20px; padding: 10px; border-radius: 6px; font-weight: bold; font-size: 0.9em; }
@@ -96,9 +96,11 @@
                 <tr>
                     <th>Stock Code</th>
                     <th>Description</th>
-                    <th>Shaft Size</th>
-                    <th>Motor Price</th>
-                    <th>Total Price (Inc. BOM)</th>
+                    <th>Shaft</th>
+                    <th>RPM</th>
+                    <th>Cycles/Hr</th>
+                    <th>Motor £</th>
+                    <th>Total £ (Inc. BOM)</th>
                 </tr>
             </thead>
             <tbody id="motorBody"></tbody>
@@ -161,7 +163,7 @@
         }
 
         try {
-            // --- 1. TORQUE ---
+            // 1. Torque Calculation
             const headerRow = torqueData[2]; 
             let availTWidths = [];
             for (let j = 2; j < headerRow.length; j++) {
@@ -187,7 +189,7 @@
             }
             const calculatedTorque = parseFloat(torqueData[tHeightMatch.index][tWidthMatch.index]);
 
-            // --- 2. BOM PRICE (Automatic) ---
+            // 2. BOM Price Calculation
             let currentBomPrice = 0;
             let bomInfoText = "";
 
@@ -210,25 +212,18 @@
                 const bomHeightMatch = bomHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
 
                 if (bomWidthMatch && bomHeightMatch) {
-                    const priceRaw = bomPriceData[bomHeightMatch.index][bomWidthMatch.index];
-                    currentBomPrice = parseFloat(priceRaw) || 0;
-                    
+                    currentBomPrice = parseFloat(bomPriceData[bomHeightMatch.index][bomWidthMatch.index]) || 0;
                     bomInfoText = `
                         <div style="color:#2e7d32; font-weight:bold; margin-top:8px; padding-top:8px; border-top:1px solid #ceead6;">
                             Base BOM Price (without motor): £${currentBomPrice.toFixed(2)}
                         </div>
-                        <div style="font-size:0.8em; color:#666;">
-                            (Using chart values: W${bomWidthMatch.val} x H${bomHeightMatch.val})
-                        </div>
                     `;
-                } else {
-                    bomInfoText = `<div style="color:#d93025; font-size:0.8em; margin-top:5px;">Warning: BOM data not found for these dimensions.</div>`;
                 }
             }
 
             showResult(`
                 <div style="font-size:1.4em; font-weight:bold;">Required Torque: ${calculatedTorque} Nm</div>
-                <div class="rounding-info">Based on chart rounding: ${tWidthMatch.val}mm x ${tHeightMatch.val}mm</div>
+                <div class="rounding-info">Rounding: ${tWidthMatch.val}mm x ${tHeightMatch.val}mm</div>
                 ${bomInfoText}
             `, "success");
 
@@ -236,7 +231,7 @@
             findMotors(calculatedTorque, brake, currentBomPrice, driveTypeFilter);
 
         } catch (err) {
-            showResult("Calculation Error. Please check data alignment in Excel.", "error");
+            showResult("Calculation Error. Please check Excel format.", "error");
             console.error(err);
         }
     });
@@ -257,7 +252,7 @@
                                  <div><strong>Shaft Size:</strong> <span class="shaft-badge">${selected.shaft || 'N/A'}</span><br>
                                  <strong>Price:</strong> <span class="price-tag">£${selected.price}</span></div>`;
         } else {
-            display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm in the chart.</div>`;
+            display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm.</div>`;
         }
         return selected;
     }
@@ -272,21 +267,25 @@
             const row = motorData[i];
             const min = parseFloat(row[5]);
             const max = parseFloat(row[6]);
-            const rowDriveType = String(row[8] || "").toLowerCase().trim(); // Column I
+            const rowDriveType = String(row[8] || "").toLowerCase().trim();
 
-            // Filter by Torque range AND matching Drive Type
             if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max && rowDriveType === driveTypeFilter) {
                 found = true;
                 
-                // Indirect motors take the shaft size from the brake
                 let shaft = (rowDriveType === "indirect" && brake) ? brake.shaft : row[7];
                 const motorPrice = parseFloat(row[4]) || 0;
+                
+                // NEW: Extraction of RPM (Col J / Index 9) and Cycles (Col K / Index 10)
+                const rpm = row[9] || "-";
+                const cycles = row[10] || "-";
                 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td>${row[0]}</td>
                     <td>${row[2]}</td>
                     <td><span class="shaft-badge">${shaft || '-'}</span></td>
+                    <td>${rpm}</td>
+                    <td>${cycles}</td>
                     <td class="price-tag">£${motorPrice.toFixed(2)}</td>
                     <td class="total-price-tag">£${(motorPrice + bomPrice).toFixed(2)}</td>
                 `;
