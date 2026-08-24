@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Torque, Motor & Brake Finder</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; padding: 20px; max-width: 950px; margin: 0 auto; background-color: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        h2 { color: #1a73e8; margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        h3 { color: #333; margin-top: 25px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+        .input-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #444; }
+        select, input { width: 100%; padding: 10px; border: 1px solid #ccd0d5; border-radius: 6px; box-sizing: border-box; font-size: 15px; }
+        button { background-color: #1a73e8; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; width: 100%; font-size: 16px; font-weight: bold; margin-top: 10px; }
+        button:hover { background-color: #1557b0; }
+        
+        #torqueResult { margin-top: 20px; padding: 15px; border-radius: 6px; display: none; text-align: center; }
+        .success { background-color: #e6f4ea; color: #1e8e3e; border: 1px solid #ceead6; }
+        .error { background-color: #fce8e6; color: #d93025; border: 1px solid #fad2cf; }
+        .rounding-info { display: block; font-size: 0.8em; margin-top: 5px; color: #666; font-weight: normal; }
+
+        .result-section { display: none; margin-top: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f8f9fa; color: #555; }
+        tr:nth-child(even) { background-color: #fafafa; }
+        
+        .brake-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background-color: #fffde7; border: 1px solid #fbc02d; padding: 15px; border-radius: 6px; margin-top: 10px; }
+        .price-tag { font-weight: bold; color: #2e7d32; }
+        .shaft-badge { display: inline-block; background: #e3f2fd; color: #0d47a1; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Torque Finder Pro</h2>
+    
+    <div class="input-group">
+        <label for="excelFile">1. Import Spreadsheet</label>
+        <input type="file" id="excelFile" accept=".xlsx, .xls">
+    </div>
+
+    <div class="input-group">
+        <label for="shutterType">2. Roller Shutter Type</label>
+        <select id="shutterType">
+            <option value="75mm22g">75mm22g</option>
+            <option value="75mm22gr">75mm22gr</option>
+            <option value="75mm20g">75mm20g</option>
+            <option value="75mm20gr">75mm20gr</option>
+            <option value="75mm18g">75mm18g</option>
+            <option value="75mm18gr">75mm18gr</option>
+            <option value="95mm">95mm</option>
+            <option value="100mm">100mm</option>
+        </select>
+    </div>
+
+    <div style="display: flex; gap: 15px;">
+        <div class="input-group" style="flex: 1;">
+            <label for="widthInput">Width (mm)</label>
+            <input type="number" id="widthInput" placeholder="e.g. 2050">
+        </div>
+        <div class="input-group" style="flex: 1;">
+            <label for="heightInput">Height (mm)</label>
+            <input type="number" id="heightInput" placeholder="e.g. 1500">
+        </div>
+    </div>
+
+    <button id="lookupBtn">Run Full Calculation</button>
+
+    <div id="torqueResult"></div>
+
+    <!-- Safety Brake Section -->
+    <div id="brakeSection" class="result-section">
+        <h3>Recommended Safety Brake</h3>
+        <div id="brakeDisplay" class="brake-grid"></div>
+    </div>
+
+    <!-- Motor Section -->
+    <div id="motorSection" class="result-section">
+        <h3>Compatible Motors</h3>
+        <table id="motorTable">
+            <thead>
+                <tr>
+                    <th>Stock Code</th>
+                    <th>Description</th>
+                    <th>Shaft Size</th>
+                    <th>Price</th>
+                </tr>
+            </thead>
+            <tbody id="motorBody"></tbody>
+        </table>
+        <p id="noMotorMsg" style="display:none; color: #666; font-style: italic;">No motors found for this torque range.</p>
+    </div>
+</div>
+
+<script>
+    let torqueData = null;
+    let motorData = null;
+    let brakeData = null;
+
+    document.getElementById('excelFile').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                const tName = workbook.SheetNames.find(n => n.trim() === "All torque charts");
+                const mName = workbook.SheetNames.find(n => n.trim() === "Motor list");
+                const bName = workbook.SheetNames.find(n => n.trim() === "Safety brake");
+
+                if (tName) torqueData = XLSX.utils.sheet_to_json(workbook.Sheets[tName], { header: 1, defval: "" });
+                if (mName) motorData = XLSX.utils.sheet_to_json(workbook.Sheets[mName], { header: 1, defval: "" });
+                if (bName) brakeData = XLSX.utils.sheet_to_json(workbook.Sheets[bName], { header: 1, defval: "" });
+
+                if (!torqueData || !motorData || !brakeData) {
+                    showResult("Error: Missing required tabs in Excel.", "error");
+                } else {
+                    showResult("System Ready: Data Loaded.", "success");
+                }
+            } catch (err) {
+                showResult("Failed to read Excel file.", "error");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    document.getElementById('lookupBtn').addEventListener('click', function() {
+        if (!torqueData) { showResult("Please upload the Excel file.", "error"); return; }
+
+        const selectedType = document.getElementById('shutterType').value.toLowerCase();
+        const inputWidth = parseFloat(document.getElementById('widthInput').value);
+        const inputHeight = parseFloat(document.getElementById('heightInput').value);
+
+        if (isNaN(inputWidth) || isNaN(inputHeight)) {
+            showResult("Please enter numeric values.", "error");
+            return;
+        }
+
+        try {
+            // 1. GRID ROUND UP
+            const headerRow = torqueData[2]; 
+            let availableWidths = [];
+            for (let j = 2; j < headerRow.length; j++) {
+                let val = parseFloat(headerRow[j]);
+                if (!isNaN(val)) availableWidths.push({ val: val, index: j });
+            }
+            const widthMatch = availableWidths.sort((a,b)=>a.val-b.val).find(w => w.val >= inputWidth);
+
+            let availableHeights = [];
+            for (let i = 3; i < torqueData.length; i++) {
+                const rowType = String(torqueData[i][0] || "").toLowerCase().replace(/\s/g, '');
+                if (rowType === selectedType) {
+                    let hVal = parseFloat(torqueData[i][1]);
+                    if (!isNaN(hVal)) availableHeights.push({ val: hVal, index: i });
+                }
+            }
+            const heightMatch = availableHeights.sort((a,b)=>a.val-b.val).find(h => h.val >= inputHeight);
+
+            if (!widthMatch || !heightMatch) {
+                showResult("Input exceeds chart dimensions.", "error");
+                return;
+            }
+
+            const calculatedTorque = parseFloat(torqueData[heightMatch.index][widthMatch.index]);
+            
+            showResult(`
+                <div style="font-size:1.4em; font-weight:bold;">Required Torque: ${calculatedTorque} Nm</div>
+                <div class="rounding-info">Calculated using: ${widthMatch.val}mm x ${heightMatch.val}mm</div>
+            `, "success");
+
+            findSafetyBrake(calculatedTorque);
+            findMotors(calculatedTorque);
+
+        } catch (err) {
+            showResult("Error during calculation.", "error");
+        }
+    });
+
+    function findSafetyBrake(torque) {
+        const display = document.getElementById('brakeDisplay');
+        document.getElementById('brakeSection').style.display = 'block';
+        let selectedBrake = null;
+
+        for (let i = 1; i < brakeData.length; i++) {
+            const row = brakeData[i];
+            const maxTorqueLimit = parseFloat(row[1]); // Col B
+
+            if (!isNaN(maxTorqueLimit) && torque <= maxTorqueLimit) {
+                selectedBrake = {
+                    name: row[0],       // Col A
+                    shaft: row[5],      // Col F (Index 5)
+                    stockCode: row[7],  // Col H (Index 7)
+                    price: row[8]       // Col I (Index 8)
+                };
+                break;
+            }
+        }
+
+        if (selectedBrake) {
+            display.innerHTML = `
+                <div>
+                    <strong>Model:</strong> ${selectedBrake.name}<br>
+                    <strong>Stock Code:</strong> ${selectedBrake.stockCode}
+                </div>
+                <div>
+                    <strong>Shaft Size:</strong> <span class="shaft-badge">${selectedBrake.shaft || 'N/A'}</span><br>
+                    <strong>Price:</strong> <span class="price-tag">£${selectedBrake.price}</span>
+                </div>
+            `;
+        } else {
+            display.innerHTML = `<div style="grid-column: span 2; color:red">No safety brake found for ${torque}Nm.</div>`;
+        }
+    }
+
+    function findMotors(torque) {
+        const body = document.getElementById('motorBody');
+        const section = document.getElementById('motorSection');
+        body.innerHTML = "";
+        let found = false;
+
+        for (let i = 1; i < motorData.length; i++) {
+            const row = motorData[i];
+            const min = parseFloat(row[5]);
+            const max = parseFloat(row[6]);
+
+            if (!isNaN(min) && !isNaN(max) && torque >= min && torque <= max) {
+                found = true;
+                const tr = document.createElement('tr');
+                // Col A: Stock, Col C: Desc, Col H: Shaft (Idx 7), Col E: Price (Idx 4)
+                tr.innerHTML = `
+                    <td>${row[0]}</td>
+                    <td>${row[2]}</td>
+                    <td><span class="shaft-badge">${row[7] || '-'}</span></td>
+                    <td class="price-tag">£${row[4]}</td>
+                `;
+                body.appendChild(tr);
+            }
+        }
+
+        section.style.display = 'block';
+        document.getElementById('motorTable').style.display = found ? 'table' : 'none';
+        document.getElementById('noMotorMsg').style.display = found ? 'none' : 'block';
+    }
+
+    function showResult(message, type) {
+        const resDiv = document.getElementById('torqueResult');
+        resDiv.innerHTML = message;
+        resDiv.className = type;
+        resDiv.style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
